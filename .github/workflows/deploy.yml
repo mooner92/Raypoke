@@ -1,0 +1,54 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          script_stop: true
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            cd ~/projects/pokebot
+
+            echo "::group::Pulling latest"
+            PREV_SHA="$(git rev-parse HEAD)"
+            git fetch --all
+            git reset --hard origin/main
+            echo "::endgroup::"
+
+            echo "::group::Build & deploy"
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+            echo "::endgroup::"
+
+            echo "::group::Health check"
+            ok=0
+            for i in $(seq 1 12); do
+              if curl -fsS http://localhost:3000/health | grep -q '"status":"ok"'; then
+                ok=1; echo "Healthy after ${i} attempt(s)."; break
+              fi
+              echo "Attempt ${i}: not ready yet..."; sleep 5
+            done
+
+            if [ "$ok" -ne 1 ]; then
+              echo "Health check FAILED — rolling back to ${PREV_SHA}"
+              git reset --hard "${PREV_SHA}"
+              docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+              exit 1
+            fi
+            echo "::endgroup::"
+            echo "Deploy succeeded."

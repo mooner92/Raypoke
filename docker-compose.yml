@@ -1,0 +1,27 @@
+services:
+  pokebot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pokebot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

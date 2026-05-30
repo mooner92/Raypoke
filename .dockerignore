@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.github
+*.log
+.env
+.env.*
+.omc
+coverage
+README.md
+nginx
+scripts
