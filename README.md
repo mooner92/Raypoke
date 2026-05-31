@@ -29,13 +29,13 @@
                   └───────┬───────────────────┬───────┘
                           │                   │
               ┌───────────▼──────┐   ┌────────▼──────────────┐
-              │  Anthropic API   │   │   Gemini 2.0 Flash    │
+              │  Anthropic API   │   │   Gemini 2.5 Flash    │
               │ (claude-sonnet)  │   │ (Google Search 그라운딩)│
               │ 비전·복잡 추론    │   │ 검색·번역·길안내·가격   │
               └──────────────────┘   └───────────────────────┘
 ```
 
-> **모델 이원화**: 단순 작업(웹검색·번역·길안내·행사/티켓/가격 검색)은 무료 **Gemini 2.0 Flash**가, 이미지 분석과 복잡한 추론은 **Claude Sonnet**이 담당합니다.
+> **모델 이원화**: 단순 작업(웹검색·번역·길안내·행사/티켓/가격 검색)은 무료 **Gemini 2.5 Flash**가, 이미지 분석과 복잡한 추론은 **Claude Sonnet**이 담당합니다.
 
 ### 전체 플로우
 
@@ -52,7 +52,7 @@
 | 도구 | 설명 | 사용 API | 주요 입력 |
 |------|------|----------|-----------|
 | `web_search` | 실시간 웹검색 (Google Search 그라운딩) | Gemini | `query`, `count?` |
-| `analyze_image` | 이미지 분석 (URL/base64), 텍스트 추출·장소 식별 | Claude | `image_source`, `question`, `location?` |
+| `analyze_image` | 이미지 분석 (URL/base64/Meta CDN 자동 다운로드), 텍스트 추출·장소 식별 | Claude | `image_source`, `question`, `location?` |
 | `analyze_scene` | 장면 종합 분석 + 행사 검색 결합 | Claude(+Gemini) | `image_source`, `location?` |
 | `search_events` | 위치별 오늘 행사/입장료/예매 링크 | Gemini | `location`, `date?`, `category?` |
 | `get_ticket_info` | 행사명 → 티켓 가격·예매처·잔여석 | Gemini | `event_name`, `platform?` |
@@ -145,9 +145,10 @@ Gemini의 Google Search 그라운딩으로 실시간 정보를 검색해 3문장
 
 ### `analyze_image(image_source, question, location?)`
 `image_source`는 `https://` URL 또는 base64 문자열(`data:image/...` 접두사 허용). 포스터·간판·메뉴판의 텍스트는 반드시 추출합니다. `location` 제공 시 더 정확한 답변.
+Ray-Ban Meta 글래스가 보내는 단명·인증 CDN URL(`media.meta.com`, `fbcdn.net`, `cdninstagram.com`)은 서버가 직접 다운로드해 base64로 변환한 뒤 Claude에 전달합니다(다운로드 실패 시 URL 직접 전달로 fallback). 그 외 URL은 Claude가 직접 가져옵니다.
 
 ### `analyze_scene(image_source, location?)`
-"사람들이 왜 모여있는지"에 특화. `location`이 있으면 `search_events`와 결합해 입장료/예매 정보까지 보강합니다.
+"사람들이 왜 모여있는지"에 특화. `location`이 있으면 `search_events`와 결합해 입장료/예매 정보까지 보강합니다. `analyze_image`와 동일한 Meta CDN 자동 다운로드 처리가 적용됩니다.
 
 ### `search_events(location, date?, category?)`
 Gemini 그라운딩으로 행사명·입장료·예매 정보를 한 번에 검색해 요약. 인터파크/YES24/네이버예약 링크를 우선 노출합니다.

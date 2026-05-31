@@ -1,30 +1,92 @@
 /**
  * `analyze_image` and `analyze_scene` tools — Claude Vision over URL/base64.
+ *
+ * Meta/Facebook/Instagram CDN URLs (media.meta.com, fbcdn.net, cdninstagram.com)
+ * are short-lived and often reject Anthropic's server-side fetch, so we download
+ * them ourselves and forward the bytes to Claude as base64.
  */
+import axios from 'axios';
 import { z } from 'zod';
-import { completeWithImage, complete } from '../utils/claude.js';
+import { completeWithImage, complete, detectMediaType } from '../utils/claude.js';
+import { logger } from '../utils/logger.js';
+import { describeError } from '../utils/errors.js';
+import type { ImageMediaType } from '../types/index.js';
 import { searchEventsCore } from './events.js';
 import { guard, textResult, type ToolDefinition } from './helpers.js';
 
-/** Parsed representation of an incoming image source. */
-interface ParsedImage {
-  url?: string;
-  base64?: string;
+/** An image resolved to the shape Claude Vision expects (URL or base64). */
+type PreparedImage = { url: string } | { base64: string; mediaType: ImageMediaType };
+
+/** Host substrings whose images must be downloaded rather than passed by URL. */
+const DOWNLOAD_HOST_PATTERNS = ['media.meta.com', 'fbcdn.net', 'cdninstagram.com'];
+
+/**
+ * Downloads an image and returns it as base64 with a detected media type.
+ *
+ * @param url - The image URL to fetch.
+ * @returns The base64-encoded bytes and the resolved media type.
+ * @throws When the HTTP request fails or times out (10s).
+ */
+async function downloadImageAsBase64(
+  url: string,
+): Promise<{ base64: string; mediaType: ImageMediaType }> {
+  const response = await axios.get<ArrayBuffer>(url, {
+    responseType: 'arraybuffer',
+    timeout: 10000,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+      Accept: 'image/webp,image/apng,image/*,*/*;q=0.8',
+    },
+  });
+
+  const base64 = Buffer.from(response.data).toString('base64');
+  const contentType = String(response.headers['content-type'] ?? 'image/jpeg');
+  const mediaType: ImageMediaType = contentType.includes('png')
+    ? 'image/png'
+    : contentType.includes('gif')
+      ? 'image/gif'
+      : contentType.includes('webp')
+        ? 'image/webp'
+        : 'image/jpeg';
+
+  return { base64, mediaType };
 }
 
 /**
- * Determines whether an image source is a URL or base64 payload and strips any
- * `data:image/...;base64,` prefix from base64 inputs.
+ * Resolves a raw `image_source` into the form Claude Vision expects.
+ *
+ * - CDN URLs (Meta/FB/Instagram) are downloaded and converted to base64; on
+ *   failure we fall back to passing the URL directly to Claude.
+ * - Other `http(s)` URLs are passed through as a URL.
+ * - Anything else is treated as base64 (the `data:` prefix is stripped).
  *
  * @param imageSource - The raw `image_source` argument.
- * @returns A {@link ParsedImage} carrying either a URL or cleaned base64.
+ * @returns A {@link PreparedImage} for {@link completeWithImage}.
  */
-export function parseImageSource(imageSource: string): ParsedImage {
-  if (imageSource.startsWith('http')) {
+async function prepareImageSource(imageSource: string): Promise<PreparedImage> {
+  const isUrl = imageSource.startsWith('http');
+  const needsDownload = isUrl && DOWNLOAD_HOST_PATTERNS.some((host) => imageSource.includes(host));
+
+  if (needsDownload) {
+    try {
+      logger.info('Downloading CDN image for base64 conversion', { url: imageSource });
+      return await downloadImageAsBase64(imageSource);
+    } catch (error) {
+      logger.warn('Image download failed; falling back to direct URL', {
+        url: imageSource,
+        error: describeError(error),
+      });
+      return { url: imageSource };
+    }
+  }
+
+  if (isUrl) {
     return { url: imageSource };
   }
+
   const base64 = imageSource.replace(/^data:image\/\w+;base64,/, '');
-  return { base64 };
+  return { base64, mediaType: detectMediaType(base64) };
 }
 
 // ── analyze_image ────────────────────────────────────────────────────────────
@@ -42,11 +104,11 @@ interface AnalyzeImageArgs {
 }
 
 async function runAnalyzeImage(args: AnalyzeImageArgs) {
-  const parsed = parseImageSource(args.image_source);
+  const prepared = await prepareImageSource(args.image_source);
   const locationHint = args.location ? `\n현재 위치: ${args.location}` : '';
   const question = `${args.question}${locationHint}\n이미지에 텍스트(포스터, 간판, 메뉴판)가 있으면 반드시 추출해서 언급하세요.`;
 
-  const answer = await completeWithImage({ ...parsed, question, maxTokens: 1024 });
+  const answer = await completeWithImage({ ...prepared, question, maxTokens: 1024 });
   return textResult(answer);
 }
 
@@ -82,11 +144,11 @@ const SCENE_SYSTEM_PROMPT = `당신은 Ray-Ban Meta 스마트 글래스 사용�
  * augments the answer with live event/ticket information.
  */
 async function runAnalyzeScene(args: AnalyzeSceneArgs) {
-  const parsed = parseImageSource(args.image_source);
+  const prepared = await prepareImageSource(args.image_source);
   const locationHint = args.location ? `현재 위치: ${args.location}.` : '';
 
   const sceneAnswer = await completeWithImage({
-    ...parsed,
+    ...prepared,
     question: `${locationHint} 이 장면에서 사람들이 왜 모여있는지, 어떤 행사나 장소인지 분석해주세요.`,
     system: SCENE_SYSTEM_PROMPT,
     maxTokens: 1024,
