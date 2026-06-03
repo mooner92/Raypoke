@@ -1,8 +1,8 @@
 /**
- * `ask_claude` tool — direct access to Claude for reasoning, explanation, analysis.
+ * `ask_ai` tool — direct access to Gemini for reasoning, explanation, analysis.
  */
 import { z } from 'zod';
-import { complete } from '../utils/claude.js';
+import { askGemini } from '../utils/gemini.js';
 import { guard, textResult, type ToolDefinition } from './helpers.js';
 
 const inputSchema = {
@@ -10,23 +10,19 @@ const inputSchema = {
   system: z.string().optional().describe('시스템 프롬프트 (선택)'),
 };
 
-interface AskClaudeArgs {
+interface AskAiArgs {
   prompt: string;
   system?: string;
 }
 
-async function run(args: AskClaudeArgs) {
-  const answer = await complete({
-    prompt: args.prompt,
-    ...(args.system ? { system: args.system } : {}),
-    maxTokens: 1024,
-  });
+async function run(args: AskAiArgs) {
+  const answer = await askGemini(args.prompt, args.system);
   return textResult(answer);
 }
 
-export const askClaudeTool: ToolDefinition<AskClaudeArgs> = {
-  name: 'ask_claude',
-  description: '복잡한 질문, 설명, 분석, 추론이 필요할 때 Claude AI에게 직접 질문합니다.',
+export const askAiTool: ToolDefinition<AskAiArgs> = {
+  name: 'ask_ai',
+  description: '복잡한 질문, 설명, 분석, 추론이 필요할 때 AI에게 직접 질문합니다.',
   inputSchema,
-  handler: guard('ask_claude', run),
+  handler: guard('ask_ai', run),
 };

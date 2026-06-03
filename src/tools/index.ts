@@ -6,7 +6,7 @@ import { webSearchTool } from './search.js';
 import { analyzeImageTool, analyzeSceneTool } from './vision.js';
 import { searchEventsTool, getTicketInfoTool } from './events.js';
 import { translateTool } from './translate.js';
-import { askClaudeTool } from './ask.js';
+import { askAiTool } from './ask.js';
 import { navigateTool } from './navigate.js';
 import { priceSearchTool } from './price.js';
 
@@ -26,7 +26,7 @@ export const allTools: ToolDefinition[] = [
   erase(searchEventsTool),
   erase(getTicketInfoTool),
   erase(translateTool),
-  erase(askClaudeTool),
+  erase(askAiTool),
   erase(navigateTool),
   erase(priceSearchTool),
 ];
@@ -41,7 +41,7 @@ export {
   searchEventsTool,
   getTicketInfoTool,
   translateTool,
-  askClaudeTool,
+  askAiTool,
   navigateTool,
   priceSearchTool,
 };

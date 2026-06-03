@@ -57,7 +57,7 @@ warn "REMINDER: also open 80/443 in the Oracle Cloud Console → Security List i
 if [ ! -f .env ]; then
   log "Creating .env from .env.example — fill in your API keys."
   cp .env.example .env
-  warn "Edit .env now: ANTHROPIC_API_KEY and BRAVE_SEARCH_API_KEY are required."
+  warn "Edit .env now: GEMINI_API_KEY is required."
 else
   log ".env already exists; leaving it untouched."
 fi

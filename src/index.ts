@@ -11,7 +11,6 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { loadConfig } from './config.js';
 import { createMcpServer, SERVER_VERSION } from './server.js';
 import { toolNames } from './tools/index.js';
-import { pingAnthropic } from './utils/claude.js';
 import { pingGemini } from './utils/gemini.js';
 import { logger } from './utils/logger.js';
 import { describeError } from './utils/errors.js';
@@ -58,16 +57,15 @@ function authenticate(req: Request, res: Response, next: NextFunction): void {
 // ── Health ───────────────────────────────────────────────────────────────────
 
 app.get('/health', async (_req: Request, res: Response) => {
-  const [anthropic, gemini] = await Promise.all([pingAnthropic(), pingGemini()]);
+  const gemini = await pingGemini();
   const toStatus = (ok: boolean): ApiStatus => (ok ? 'connected' : 'disconnected');
 
   res.json({
-    status: anthropic && gemini ? 'ok' : 'degraded',
+    status: gemini ? 'ok' : 'degraded',
     version: SERVER_VERSION,
     uptime: Math.floor(process.uptime()),
     tools: toolNames,
     apis: {
-      anthropic: toStatus(anthropic),
       gemini: toStatus(gemini),
     },
     active_sessions: transports.size,

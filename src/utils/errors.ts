@@ -15,7 +15,7 @@ export class PokeBotError extends Error {
   }
 }
 
-/** Raised when an external API (Gemini, Anthropic) fails. */
+/** Raised when an external API (Gemini, image download) fails. */
 export class ExternalApiError extends PokeBotError {
   constructor(
     public readonly service: string,
