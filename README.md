@@ -120,7 +120,7 @@ bash scripts/setup.sh
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-- **자동 배포**: `main` 브랜치에 푸시하면 GitHub Actions가 Oracle 서버로 배포합니다. 저장소 Secrets에 `ORACLE_HOST`, `ORACLE_USER`, `ORACLE_SSH_KEY`를 등록해야 합니다(Settings → Secrets and variables → Actions).
+- **배포**: 서버에서 직접 개발·운영하므로 `git pull` 후 위 `docker compose ... up -d --build`로 갱신합니다(수동). 별도 자동배포 파이프라인은 사용하지 않습니다.
 - **모니터링**: `bash scripts/health-check.sh [URL]`로 헬스체크를 cron에 걸 수 있고, `WEBHOOK_URL`을 설정하면 실패 시 알림을 POST합니다.
 
 > **Oracle Free Tier 주의**: 방화벽은 **iptables**와 **Oracle Security List(콘솔)** 양쪽 모두 열어야 합니다. `setup.sh`가 iptables는 처리하지만, 콘솔의 Security List 인그레스 규칙(80/443)은 수동으로 추가해야 합니다.
@@ -218,7 +218,7 @@ Gemini 그라운딩으로 상품의 인터넷 최저가·판매처·구매 링�
 1. 이슈를 등록하거나 기능을 제안합니다.
 2. 브랜치를 만들어 작업합니다. PR 시 CI(`lint` + `typecheck` + `build`)가 자동 실행됩니다.
 3. 코드 스타일: ESLint + Prettier (`npm run lint`, `npm run format`). `any` 사용 금지.
-4. `main` 브랜치 머지 시 Oracle 서버로 자동 배포됩니다(3-2 참고).
+4. 배포는 서버에서 수동으로 갱신합니다(3-2 참고).
 
 > 단위 테스트는 현재 범위에서 제외되어 있으며 향후 추가 예정입니다 (TODO).
 
