@@ -174,7 +174,7 @@ Gemini의 Google Search 그라운딩으로 실시간 정보를 검색해 3문장
 
 ### `analyze_image(image_source, question, location?)`
 `image_source`는 `https://` URL 또는 base64 문자열(`data:image/...` 접두사 허용)입니다. 포스터·간판·메뉴판의 텍스트는 반드시 추출하며, `location`을 제공하면 더 정확한 답변을 얻을 수 있습니다.
-Gemini는 임의의 이미지 URL을 직접 가져오지 못하므로, 모든 `http(s)` URL(Ray-Ban Meta 글래스가 보내는 단명·인증 CDN URL `media.meta.com`·`fbcdn.net`·`cdninstagram.com` 포함)은 서버가 직접 다운로드해 base64로 변환한 뒤 Gemini Vision에 전달합니다. 다운로드에 실패하면 한국어 오류 메시지를 반환합니다.
+Gemini는 이미지 URL을 직접 가져오지 못하므로, 모든 `http(s)` URL은 서버가 받아 base64로 변환한 뒤 Gemini Vision에 전달합니다. 특히 Ray-Ban Meta 글래스가 보내는 `media.meta.com/s/...` 링크는 **이미지가 아니라 HTML 뷰어 페이지**라서, 서버가 그 페이지의 `og:image` 태그에서 실제 이미지(서명된 `*.fbcdn.net` URL, 인증 불필요)를 찾아 한 번 더 받아옵니다. 매직바이트로 실제 이미지인지 검증하므로 만료·로그인 페이지 같은 비이미지 응답은 Gemini로 보내지 않고 한국어 오류 메시지를 반환합니다.
 
 ### `analyze_scene(image_source, location?)`
 "사람들이 왜 모여있는지"에 특화되어 있습니다. `location`이 있으면 `search_events`와 결합해 입장료·예매 정보까지 보강하며, `analyze_image`와 동일한 이미지 다운로드 처리가 적용됩니다.

@@ -1,9 +1,11 @@
 /**
  * `analyze_image` and `analyze_scene` tools — Gemini Vision over URL/base64.
  *
- * Gemini cannot fetch arbitrary image URLs, so any `http(s)` source (including
- * the short-lived, auth-gated Meta/Facebook/Instagram CDN URLs that Ray-Ban Meta
- * glasses send) is downloaded here and forwarded to Gemini as base64 bytes.
+ * Gemini cannot fetch image URLs itself, so every `http(s)` source is downloaded
+ * here and forwarded as base64 bytes. Ray-Ban Meta glasses send a Meta share
+ * link (`media.meta.com/s/...`) which is actually an HTML viewer page, not the
+ * image — we follow its `og:image` tag to the real signed `*.fbcdn.net` photo
+ * (publicly fetchable; no Meta auth needed) and download that.
  */
 import axios from 'axios';
 import { z } from 'zod';
@@ -20,36 +22,165 @@ interface PreparedImage {
   mediaType: ImageMediaType;
 }
 
+/** Detects an image type from the buffer's magic bytes (authoritative). */
+function sniffImageType(buffer: Buffer): ImageMediaType | null {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return 'image/png';
+  }
+  if (buffer.length >= 3 && buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+    return 'image/gif';
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+/** Maps a Content-Type header to a supported image media type (jpeg fallback). */
+function mediaTypeFromContentType(contentType: string): ImageMediaType {
+  if (contentType.includes('png')) return 'image/png';
+  if (contentType.includes('gif')) return 'image/gif';
+  if (contentType.includes('webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
+const USER_AGENT =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15';
+
+/** Hosts we will follow an extracted share-page image URL to (SSRF guard). */
+const ALLOWED_IMAGE_HOST_SUFFIXES = [
+  'fbcdn.net',
+  'media.meta.com',
+  'cdninstagram.com',
+  'facebook.com',
+];
+
+/** Minimal HTML-entity decode for URLs pulled out of meta tags. */
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
 /**
- * Downloads an image and returns it as base64 with a detected media type.
- * A browser-like User-Agent is sent so picky CDNs (Meta/FB/Instagram) serve us.
- *
- * @param url - The image URL to fetch.
- * @returns The base64-encoded bytes and the resolved media type.
- * @throws When the HTTP request fails or times out (10s).
+ * Extracts the primary image URL from a share/viewer HTML page.
+ * Meta share links (`media.meta.com/s/...`) return an HTML page whose `og:image`
+ * meta tag points at the real signed image on `*.fbcdn.net`.
  */
-async function downloadImageAsBase64(url: string): Promise<PreparedImage> {
+function extractImageUrlFromHtml(html: string): string | null {
+  const patterns = [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
+    /<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return decodeHtmlEntities(match[1]);
+  }
+  return null;
+}
+
+/** Whether an extracted URL is an https URL on an allowed Meta/FB image host. */
+function isAllowedImageHost(rawUrl: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(rawUrl);
+    return (
+      protocol === 'https:' &&
+      ALLOWED_IMAGE_HOST_SUFFIXES.some(
+        (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Fetches a URL as bytes with a browser-like User-Agent. */
+async function fetchBinary(
+  url: string,
+): Promise<{ buffer: Buffer; contentType: string; status: number }> {
   const response = await axios.get<ArrayBuffer>(url, {
     responseType: 'arraybuffer',
     timeout: 10000,
+    maxRedirects: 5,
     headers: {
-      'User-Agent':
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
-      Accept: 'image/webp,image/apng,image/*,*/*;q=0.8',
+      'User-Agent': USER_AGENT,
+      Accept: 'text/html,image/webp,image/apng,image/*,*/*;q=0.8',
     },
   });
+  return {
+    buffer: Buffer.from(response.data),
+    contentType: String(response.headers['content-type'] ?? ''),
+    status: response.status,
+  };
+}
 
-  const base64 = Buffer.from(response.data).toString('base64');
-  const contentType = String(response.headers['content-type'] ?? 'image/jpeg');
-  const mediaType: ImageMediaType = contentType.includes('png')
-    ? 'image/png'
-    : contentType.includes('gif')
-      ? 'image/gif'
-      : contentType.includes('webp')
-        ? 'image/webp'
-        : 'image/jpeg';
+/**
+ * Downloads an image and returns it as base64 with a verified media type.
+ *
+ * Handles two shapes Ray-Ban Meta / Poke send:
+ *   1. A direct image URL → returned as-is.
+ *   2. A Meta share/viewer page (`media.meta.com/s/...`) that responds with
+ *      HTML → the real image is extracted from the page's `og:image` tag and
+ *      fetched (one hop, restricted to Meta/FB image hosts).
+ *
+ * The bytes are validated to actually be an image (magic bytes or `image/*`
+ * Content-Type), so an expiry/login HTML page is never sent to Gemini as a
+ * fake photo.
+ *
+ * @param url - The image or share-page URL to fetch.
+ * @param depth - Internal recursion guard (share page → image is one hop).
+ * @returns The base64-encoded bytes and the resolved media type.
+ * @throws When the request fails, times out (10s), or no image can be resolved.
+ */
+async function downloadImageAsBase64(url: string, depth = 0): Promise<PreparedImage> {
+  const { buffer, contentType, status } = await fetchBinary(url);
+  const sniffed = sniffImageType(buffer);
 
-  return { base64, mediaType };
+  logger.info('Image fetch', { url, status, contentType, bytes: buffer.length, sniffed, depth });
+
+  // Already an image → done.
+  if (sniffed || contentType.startsWith('image/')) {
+    return {
+      base64: buffer.toString('base64'),
+      mediaType: sniffed ?? mediaTypeFromContentType(contentType),
+    };
+  }
+
+  // A share/viewer HTML page (e.g. media.meta.com/s/...): pull the real image
+  // URL out of og:image and fetch it once.
+  if (depth === 0 && contentType.includes('html')) {
+    const resolved = extractImageUrlFromHtml(buffer.toString('utf8'));
+    if (resolved && isAllowedImageHost(resolved)) {
+      logger.info('Resolved image from share page og:image', { from: url, to: resolved });
+      return downloadImageAsBase64(resolved, depth + 1);
+    }
+    throw new Error(
+      `공유 페이지에서 이미지 URL을 찾지 못했습니다 (${url}, og:image ${resolved ? '비허용 호스트' : '없음'})`,
+    );
+  }
+
+  const snippet = buffer.toString('utf8', 0, 200).replace(/\s+/g, ' ').trim();
+  throw new Error(
+    `응답이 이미지가 아닙니다 (content-type="${contentType || 'none'}", ${buffer.length} bytes): ${snippet}`,
+  );
 }
 
 /**
